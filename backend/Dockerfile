@@ -1,9 +1,7 @@
-FROM php:8.3-cli
+FROM php:8.3-cli-alpine
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends libsqlite3-dev \
-    && docker-php-ext-install pdo_sqlite sqlite3 \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache sqlite-dev \
+    && docker-php-ext-install pdo_sqlite sqlite3
 
 WORKDIR /app/backend
 
