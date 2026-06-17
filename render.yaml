@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: notasflow-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    plan: starter
+    envVars:
+      - key: FRONTEND_ORIGIN
+        value: https://notasflow-frontend.onrender.com
+      - key: PAYPAL_BASE_URL
+        value: https://api-m.sandbox.paypal.com
+      - key: PAYPAL_CURRENCY
+        value: USD
+      - key: MERCADOPAGO_BASE_URL
+        value: https://api.mercadopago.com
+      - key: MERCADOPAGO_CURRENCY
+        value: MXN
+
+  - type: static
+    name: notasflow-frontend
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_URL
+        value: https://notasflow-backend.onrender.com/api
