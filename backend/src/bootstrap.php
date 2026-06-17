@@ -467,44 +467,29 @@ function create_stripe_session(array $checkout): array
     $description = "Suscripción {$checkout['plan']} - NotasFlow";
 
     try {
-        if (!function_exists('curl_init')) {
-            throw new RuntimeException('PHP cURL no esta habilitado.');
+        $response = http_form_request(
+            'https://api.stripe.com/v1/checkout/sessions',
+            [
+                'payment_method_types[]' => 'card',
+                'line_items[0][price_data][currency]' => 'usd',
+                'line_items[0][price_data][unit_amount]' => $amount,
+                'line_items[0][price_data][product_data][name]' => $description,
+                'line_items[0][quantity]' => 1,
+                'mode' => 'payment',
+                'success_url' => env_value('FRONTEND_ORIGIN', 'http://localhost:5173') . '?payment=success',
+                'cancel_url' => env_value('FRONTEND_ORIGIN', 'http://localhost:5173') . '?payment=cancel',
+                'customer_email' => $checkout['customerEmail'],
+            ],
+            [
+                'basic_auth' => $stripeKey . ':',
+            ]
+        );
+
+        if (($response['status'] ?? 0) !== 200) {
+            throw new RuntimeException('Error al crear sesión en Stripe: ' . ($response['raw'] ?? 'sin detalle'));
         }
 
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, 'https://api.stripe.com/v1/checkout/sessions');
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'POST');
-        curl_setopt($ch, CURLOPT_USERPWD, $stripeKey . ':');
-        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query([
-            'payment_method_types[]' => 'card',
-            'line_items[0][price_data][currency]' => 'usd',
-            'line_items[0][price_data][unit_amount]' => $amount,
-            'line_items[0][price_data][product_data][name]' => $description,
-            'line_items[0][quantity]' => 1,
-            'mode' => 'payment',
-            'success_url' => env_value('FRONTEND_ORIGIN', 'http://localhost:5173') . '?payment=success',
-            'cancel_url' => env_value('FRONTEND_ORIGIN', 'http://localhost:5173') . '?payment=cancel',
-            'customer_email' => $checkout['customerEmail'],
-        ]));
-        curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            'Content-Type: application/x-www-form-urlencoded',
-        ]);
-
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $curlError = curl_error($ch);
-        curl_close($ch);
-
-        if ($response === false) {
-            throw new RuntimeException('Error de red al conectar con Stripe: ' . $curlError);
-        }
-
-        if ($httpCode !== 200) {
-            throw new RuntimeException('Error al crear sesión en Stripe: ' . $response);
-        }
-
-        $data = json_decode($response, true);
+        $data = $response['data'] ?? [];
 
         if (!isset($data['id'])) {
             throw new RuntimeException('No se generó session ID de Stripe');
@@ -542,10 +527,6 @@ function create_paypal_order(array $checkout): array
     }
 
     try {
-        if (!function_exists('curl_init')) {
-            throw new RuntimeException('PHP cURL no esta habilitado.');
-        }
-
         $baseUrl = env_value('PAYPAL_BASE_URL', 'https://api-m.sandbox.paypal.com');
         $currency = env_value('PAYPAL_CURRENCY', 'USD');
         $pricing = plan_pricing($checkout['plan']);
@@ -555,8 +536,8 @@ function create_paypal_order(array $checkout): array
             $baseUrl . '/v1/oauth2/token',
             ['grant_type' => 'client_credentials'],
             [
-                CURLOPT_USERPWD => $clientId . ':' . $secret,
-                CURLOPT_HTTPHEADER => ['Accept: application/json', 'Accept-Language: es_MX'],
+                'basic_auth' => $clientId . ':' . $secret,
+                'headers' => ['Accept: application/json', 'Accept-Language: es_MX'],
             ]
         );
 
@@ -635,10 +616,6 @@ function create_mercadopago_preference(array $checkout): array
     }
 
     try {
-        if (!function_exists('curl_init')) {
-            throw new RuntimeException('PHP cURL no esta habilitado.');
-        }
-
         $baseUrl = env_value('MERCADOPAGO_BASE_URL', 'https://api.mercadopago.com');
         $currency = env_value('MERCADOPAGO_CURRENCY', 'MXN');
         $pricing = plan_pricing($checkout['plan']);
@@ -719,50 +696,59 @@ function plan_pricing(string $plan): array
     return $plans[$plan] ?? $plans['basic'];
 }
 
-function http_form_request(string $url, array $fields, array $curlOptions = []): array
+function http_form_request(string $url, array $fields, array $options = []): array
 {
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, $url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($fields));
+    $headers = $options['headers'] ?? [];
+    $userPwd = $options['basic_auth'] ?? null;
 
-    foreach ($curlOptions as $option => $value) {
-        curl_setopt($ch, $option, $value);
+    if ($userPwd !== null) {
+        $headers[] = 'Authorization: Basic ' . base64_encode($userPwd);
     }
 
-    $response = curl_exec($ch);
-    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $error = curl_error($ch);
-    curl_close($ch);
-
-    if ($response === false) {
-        throw new RuntimeException('Error de red: ' . $error);
-    }
-
-    return [
-        'status' => $status,
-        'data' => json_decode($response, true) ?? [],
-        'raw' => $response,
-    ];
+    return http_request($url, [
+        'method' => 'POST',
+        'headers' => array_merge($headers, [
+            'Content-Type: application/x-www-form-urlencoded',
+        ]),
+        'body' => http_build_query($fields),
+    ]);
 }
 
 function http_json_request(string $url, array $payload, array $headers = []): array
 {
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, $url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload, JSON_UNESCAPED_UNICODE));
-    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+    return http_request($url, [
+        'method' => 'POST',
+        'headers' => $headers,
+        'body' => json_encode($payload, JSON_UNESCAPED_UNICODE),
+    ]);
+}
 
-    $response = curl_exec($ch);
-    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $error = curl_error($ch);
-    curl_close($ch);
+function http_request(string $url, array $options): array
+{
+    $headers = $options['headers'] ?? [];
+    $body = $options['body'] ?? '';
+    $method = $options['method'] ?? 'GET';
+
+    $context = stream_context_create([
+        'http' => [
+            'method' => $method,
+            'header' => implode("\r\n", $headers),
+            'content' => $body,
+            'ignore_errors' => true,
+            'timeout' => 30,
+        ],
+    ]);
+
+    $response = @file_get_contents($url, false, $context);
+    $meta = $http_response_header ?? [];
+    $status = 0;
+
+    if (!empty($meta[0]) && preg_match('#HTTP/\S+\s+(\d{3})#', $meta[0], $matches) === 1) {
+        $status = (int) $matches[1];
+    }
 
     if ($response === false) {
-        throw new RuntimeException('Error de red: ' . $error);
+        throw new RuntimeException('Error de red al conectar con el proveedor.');
     }
 
     return [
