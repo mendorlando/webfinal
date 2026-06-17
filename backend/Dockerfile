@@ -1,7 +1,9 @@
-FROM php:8.3-cli-alpine
+FROM php:8.3-cli
 
-RUN apk add --no-cache sqlite-dev \
-    && docker-php-ext-install sqlite3
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libsqlite3-dev libcurl4-openssl-dev \
+    && docker-php-ext-install sqlite3 curl \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app/backend
 
